@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { onAuthStateChanged, signOut, User } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
-import { auth, db } from '@/services/firebase'
+import type { Session, User } from '@supabase/supabase-js'
+import { fetchUserProfile, supabase } from '@/services/supabase'
 
 interface AuthContextType {
   user: User | null
@@ -20,34 +19,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading]   = useState(true)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid))
-          if (userDoc.exists()) {
-            setRole(userDoc.data().role)
-            setUserName(userDoc.data().name)
-          } else {
-            setRole(null)
-            setUserName(null)
-          }
-        } catch {
+    let cancelled = false
+
+    async function applySession(session: Session | null) {
+      if (!session?.user) {
+        if (!cancelled) {
+          setUser(null)
           setRole(null)
           setUserName(null)
+          setLoading(false)
         }
-        setUser(firebaseUser)
-      } else {
-        setUser(null)
-        setRole(null)
-        setUserName(null)
+        return
       }
+
+      const { profile } = await fetchUserProfile(session.user.id)
+      if (cancelled) return
+
+      setUser(session.user)
+      setRole(profile.role)
+      setUserName(profile.name)
       setLoading(false)
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      applySession(session)
     })
-    return () => unsubscribe()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session)
+    })
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [])
 
   async function logout() {
-    await signOut(auth)
+    await supabase.auth.signOut()
     setUser(null)
     setRole(null)
     setUserName(null)

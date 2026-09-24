@@ -5,9 +5,7 @@ import {
   ScrollView, Animated, ActivityIndicator,
   Dimensions,
 } from 'react-native'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
-import { auth, db } from '@/services/firebase'
+import { fetchUserProfile, isMeterReader, supabase } from '@/services/supabase'
 import { Colors, FontSize, Radius, Shadow } from '@/constants/theme'
 import { Feather } from '@expo/vector-icons'
 
@@ -40,7 +38,6 @@ export default function LoginScreen() {
     ]).start()
   }
 
-  // ── FIREBASE LOGIC UNTOUCHED ──────────────────────────────────────────────
   async function handleLogin() {
     triggerButtonPress()
     setError('')
@@ -54,22 +51,28 @@ export default function LoginScreen() {
     setLoading(true)
 
     try {
-      const credential = await signInWithEmailAndPassword(auth, email.trim(), password)
-      const userDoc    = await getDoc(doc(db, 'users', credential.user.uid))
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
 
-      if (!userDoc.exists()) {
+      if (signInError || !data.user) {
+        throw signInError ?? new Error('Sign-in failed.')
+      }
+
+      const { profile, hasRow } = await fetchUserProfile(data.user.id)
+
+      if (!hasRow) {
+        await supabase.auth.signOut()
         setError('Account not found. Contact your administrator.')
         triggerShake()
-        setLoading(false)
         return
       }
 
-      const role = userDoc.data().role
-
-      if (role !== 'meter-reader') {
+      if (!isMeterReader(profile.role)) {
+        await supabase.auth.signOut()
         setError('This app is for Meter Readers only.')
         triggerShake()
-        setLoading(false)
         return
       }
 
@@ -77,25 +80,29 @@ export default function LoginScreen() {
       router.replace('/(reader)/home')
 
     } catch (err: any) {
+      const code = err?.code ?? ''
+      const message = String(err?.message ?? '').toLowerCase()
       let msg = 'Something went wrong. Please try again.'
       if (
-        err.code === 'auth/user-not-found'     ||
-        err.code === 'auth/wrong-password'     ||
-        err.code === 'auth/invalid-credential'
+        code === 'invalid_credentials' ||
+        code === 'invalid_login_credentials' ||
+        message.includes('invalid login credentials')
       ) msg = 'Incorrect email or password.'
-      else if (err.code === 'auth/invalid-email')
+      else if (code === 'email_not_confirmed')
+        msg = 'Please confirm your email before signing in.'
+      else if (code === 'validation_failed' || message.includes('invalid email'))
         msg = 'Invalid email address format.'
-      else if (err.code === 'auth/too-many-requests')
+      else if (code === 'over_request_rate_limit' || code === 'too_many_requests')
         msg = 'Too many attempts. Please wait and try again.'
-      else if (err.code === 'auth/network-request-failed')
+      else if (message.includes('network') || message.includes('fetch'))
         msg = 'No internet connection.'
 
       setError(msg)
       triggerShake()
+    } finally {
       setLoading(false)
     }
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.root}>

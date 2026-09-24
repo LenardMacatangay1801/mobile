@@ -2,6 +2,7 @@ import { Redirect } from 'expo-router'
 import { View, ActivityIndicator } from 'react-native'
 import { useAuth } from '@/context/AuthContext'
 import { Colors } from '@/constants/theme'
+import { isMeterReader } from '@/services/supabase'
 
 export default function Index() {
   const { user, role, loading } = useAuth()
@@ -14,7 +15,7 @@ export default function Index() {
     )
   }
 
-  if (user && role === 'meter-reader') {
+  if (user && isMeterReader(role)) {
     return <Redirect href="/(reader)/home" />
   }
 
